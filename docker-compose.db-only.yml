@@ -1,0 +1,48 @@
+services:
+  # Database Services Only
+  postgres:
+    image: postgres:15
+    container_name: bsky-postgres-test
+    environment:
+      POSTGRES_DB: bsky_automation
+      POSTGRES_USER: bsky_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bsky_password}
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts/seed.sql:/docker-entrypoint-initdb.d/seed.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - bsky-test-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bsky_user -d bsky_automation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bsky-redis-test
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_test_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bsky-test-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_test_data:
+  redis_test_data:
+
+networks:
+  bsky-test-network:
+    driver: bridge

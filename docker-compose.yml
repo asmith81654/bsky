@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  # Database Services
+  postgres:
+    image: postgres:15
+    container_name: bsky-postgres
+    environment:
+      POSTGRES_DB: bsky_automation
+      POSTGRES_USER: bsky_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bsky_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: bsky-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  # Core Services
+  account-manager:
+    build:
+      context: ./services/account-manager
+      dockerfile: Dockerfile
+    container_name: bsky-account-manager
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - SERVICE_PORT=8001
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  proxy-manager:
+    build:
+      context: ./services/proxy-manager
+      dockerfile: Dockerfile
+    container_name: bsky-proxy-manager
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/1
+      - SERVICE_PORT=8002
+    ports:
+      - "8002:8002"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  strategy-engine:
+    build:
+      context: ./services/strategy-engine
+      dockerfile: Dockerfile
+    container_name: bsky-strategy-engine
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/2
+      - SERVICE_PORT=8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  task-scheduler:
+    build:
+      context: ./services/task-scheduler
+      dockerfile: Dockerfile
+    container_name: bsky-task-scheduler
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/3
+      - SERVICE_PORT=8004
+    ports:
+      - "8004:8004"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile
+    container_name: bsky-monitoring
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/4
+      - SERVICE_PORT=8005
+    ports:
+      - "8005:8005"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: bsky-api-gateway
+    environment:
+      - ACCOUNT_MANAGER_URL=http://account-manager:8001
+      - PROXY_MANAGER_URL=http://proxy-manager:8002
+      - STRATEGY_ENGINE_URL=http://strategy-engine:8003
+      - TASK_SCHEDULER_URL=http://task-scheduler:8004
+      - MONITORING_URL=http://monitoring:8005
+      - SERVICE_PORT=8000
+      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - account-manager
+      - proxy-manager
+      - strategy-engine
+      - task-scheduler
+      - monitoring
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+  # Worker Services (can be scaled)
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgres://bsky_user:${POSTGRES_PASSWORD:-bsky_password}@postgres:5432/bsky_automation?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/5
+      - WORKER_ID=${WORKER_ID:-worker-1}
+    depends_on:
+      - postgres
+      - redis
+      - task-scheduler
+    networks:
+      - bsky-network
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+
+  # Web Dashboard
+  web-dashboard:
+    build:
+      context: ./web-dashboard
+      dockerfile: Dockerfile
+    container_name: bsky-web-dashboard
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - bsky-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bsky-network:
+    driver: bridge

@@ -1,0 +1,170 @@
+.PHONY: help build up down logs clean test fmt lint deps migrate
+
+# Default target
+help:
+	@echo "Bluesky Automation Platform - Available Commands:"
+	@echo ""
+	@echo "  build     - Build all Docker images"
+	@echo "  up        - Start all services"
+	@echo "  down      - Stop all services"
+	@echo "  logs      - Show logs for all services"
+	@echo "  clean     - Clean up containers, images, and volumes"
+	@echo "  test      - Run tests for all services"
+	@echo "  fmt       - Format Go code"
+	@echo "  lint      - Run linters"
+	@echo "  deps      - Download dependencies"
+	@echo "  migrate   - Run database migrations"
+	@echo "  dev       - Start development environment"
+	@echo "  prod      - Start production environment"
+	@echo ""
+
+# Build all Docker images
+build:
+	@echo "Building all Docker images..."
+	docker-compose build
+
+# Start all services
+up:
+	@echo "Starting all services..."
+	docker-compose up -d
+	@echo "Services started. Access:"
+	@echo "  - Web Dashboard: http://localhost:3000"
+	@echo "  - API Gateway: http://localhost:8000"
+	@echo "  - API Docs: http://localhost:8000/swagger"
+
+# Stop all services
+down:
+	@echo "Stopping all services..."
+	docker-compose down
+
+# Show logs
+logs:
+	docker-compose logs -f
+
+# Clean up everything
+clean:
+	@echo "Cleaning up containers, images, and volumes..."
+	docker-compose down -v --rmi all --remove-orphans
+	docker system prune -f
+
+# Run tests
+test:
+	@echo "Running tests for all services..."
+	@for service in account-manager proxy-manager strategy-engine task-scheduler monitoring api-gateway worker; do \
+		echo "Testing $$service..."; \
+		docker-compose exec $$service go test ./... || true; \
+	done
+
+# Format Go code
+fmt:
+	@echo "Formatting Go code..."
+	@for service in services/*/; do \
+		if [ -f "$$service/go.mod" ]; then \
+			echo "Formatting $$service"; \
+			cd "$$service" && go fmt ./... && cd ../..; \
+		fi \
+	done
+
+# Run linters
+lint:
+	@echo "Running linters..."
+	@for service in services/*/; do \
+		if [ -f "$$service/go.mod" ]; then \
+			echo "Linting $$service"; \
+			cd "$$service" && golangci-lint run && cd ../..; \
+		fi \
+	done
+
+# Download dependencies
+deps:
+	@echo "Downloading dependencies..."
+	@for service in services/*/; do \
+		if [ -f "$$service/go.mod" ]; then \
+			echo "Downloading deps for $$service"; \
+			cd "$$service" && go mod download && cd ../..; \
+		fi \
+	done
+
+# Run database migrations
+migrate:
+	@echo "Running database migrations..."
+	docker-compose exec postgres psql -U bsky_user -d bsky_automation -f /docker-entrypoint-initdb.d/init.sql
+
+# Development environment
+dev:
+	@echo "Starting development environment..."
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Production environment
+prod:
+	@echo "Starting production environment..."
+	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Scale workers
+scale-workers:
+	@echo "Scaling workers to $(WORKERS) instances..."
+	docker-compose up -d --scale worker=$(WORKERS)
+
+# Show service status
+status:
+	@echo "Service Status:"
+	docker-compose ps
+
+# Show service health
+health:
+	@echo "Checking service health..."
+	@curl -s http://localhost:8000/health || echo "API Gateway: DOWN"
+	@curl -s http://localhost:8001/health || echo "Account Manager: DOWN"
+	@curl -s http://localhost:8002/health || echo "Proxy Manager: DOWN"
+	@curl -s http://localhost:8003/health || echo "Strategy Engine: DOWN"
+	@curl -s http://localhost:8004/health || echo "Task Scheduler: DOWN"
+	@curl -s http://localhost:8005/health || echo "Monitoring: DOWN"
+
+# Backup database
+backup:
+	@echo "Creating database backup..."
+	docker-compose exec postgres pg_dump -U bsky_user bsky_automation > backup_$(shell date +%Y%m%d_%H%M%S).sql
+
+# Restore database
+restore:
+	@echo "Restoring database from $(BACKUP_FILE)..."
+	docker-compose exec -T postgres psql -U bsky_user bsky_automation < $(BACKUP_FILE)
+
+# Show resource usage
+stats:
+	@echo "Resource Usage:"
+	docker stats --no-stream
+
+# Generate API documentation
+docs:
+	@echo "Generating API documentation..."
+	@for service in services/*/; do \
+		if [ -f "$$service/main.go" ]; then \
+			echo "Generating docs for $$service"; \
+			cd "$$service" && swag init && cd ../..; \
+		fi \
+	done
+
+# Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/swaggo/swag/cmd/swag@latest
+	go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Create new service template
+new-service:
+	@echo "Creating new service: $(SERVICE_NAME)"
+	@mkdir -p services/$(SERVICE_NAME)
+	@cp -r templates/service/* services/$(SERVICE_NAME)/
+	@sed -i 's/{{SERVICE_NAME}}/$(SERVICE_NAME)/g' services/$(SERVICE_NAME)/*
+
+# Run security scan
+security:
+	@echo "Running security scan..."
+	@for service in services/*/; do \
+		if [ -f "$$service/go.mod" ]; then \
+			echo "Scanning $$service"; \
+			cd "$$service" && gosec ./... && cd ../..; \
+		fi \
+	done
